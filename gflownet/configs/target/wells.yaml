@@ -1,0 +1,8 @@
+ndim: 32
+
+dataset:
+  _target_: target.distribution.manywell.ManyWell
+  len_data: -2333
+  dim: ${target.ndim}
+
+#shape: 10

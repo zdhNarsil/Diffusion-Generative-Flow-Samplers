@@ -1,0 +1,6 @@
+dataset:
+  _target_: target.distribution.funnel.FunnelSet
+  dim: 10
+
+ndim: 10
+#shape: 10

@@ -1,0 +1,41 @@
+defaults:
+  - _self_
+  - target: gm.yaml
+
+d: 0 # device
+seed: 0
+
+lr: 1e-4
+zlr: 1e-3
+stlam: 2. # subtb lambda
+wd: 1e-7 # weight decay
+bs: 256
+
+tstep: 100 # only for transition based buffer
+steps: 5000 # training steps
+log_freq: 20
+eval_freq: 100
+eval_n: 2000 # number of samples for estimating logZ
+
+dt: 0.01 # step size, h in the paper
+N: 100
+sigma: 1.
+sgmit: -1.
+data_ndim: ${target.ndim}
+xclip: -1 # clip x (state) to avoid overflow
+rmin: -1e6 # clip the lowest log reward value
+
+f_func:
+  _target_: gflownet.network.FourierMLP
+  in_shape: ${data_ndim}
+  out_shape: ${data_ndim}
+  num_layers: 2
+  channels: 64
+  res: False
+
+f: "tgrad" # "f" or "tgrad"
+nn_clip: 1e4
+lgv_clip: 1e4
+
+g_func:
+  _target_: gflownet.network.IdentityOne

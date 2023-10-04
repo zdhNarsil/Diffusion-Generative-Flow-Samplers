@@ -1,0 +1,5 @@
+dataset:
+  _target_: target.distribution.gm.GaussianMixture2D
+
+ndim: 2
+#shape: 2
