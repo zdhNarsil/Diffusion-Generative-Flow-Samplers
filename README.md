@@ -1,7 +1,7 @@
 # Diffusion Generative Flow Samplers 
 
-Diffusion Generative Flow Samplers (DGFS):
-Improving learning signals through partial trajectory optimization
+[Diffusion Generative Flow Samplers (DGFS):
+Improving learning signals through partial trajectory optimization](https://arxiv.org/abs/2310.02679)
 
 [Dinghuai Zhang](https://zdhnarsil.github.io/), 
 [Ricky Tian Qi Chen](https://rtqichen.github.io//),
