@@ -14,7 +14,8 @@ from target.plot import viz_sample2d, viz_kde2d, viz_contour_sample2d
 
 
 def get_alg(cfg, task=None):
-    alg = SubTrajectoryBalanceTransitionBased(cfg, task=task)
+    # alg = SubTrajectoryBalanceTransitionBased(cfg, task=task)
+    alg = SubTrajectoryBalanceTrajectoryBased(cfg, task=task)
     return alg
 
 def fl_inter_logr(x, logreward_fn, config, cur_t, sigma=None): # x: (bs, dim)
@@ -390,7 +391,7 @@ class SubTrajectoryBalanceTransitionBased(DetailedBalance):
         coef = cal_subtb_coef_matrix(self.Lambda, int(cfg.N)) # (N+1, N+1)
         self.register_buffer('coef', coef, persistent=False)
 
-    def train_step(self, traj, debug=False):
+    def train_step(self, traj):
         self.train()
         batch_size = traj[0][1].shape[0]
 
@@ -438,6 +439,79 @@ class SubTrajectoryBalanceTransitionBased(DetailedBalance):
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+
+        info["loss_train"] = loss.item()
+        return info
+
+
+class SubTrajectoryBalanceTrajectoryBased(DetailedBalance):
+    def __init__(self, cfg, task=None):
+        super().__init__(cfg, task)
+
+        self.Lambda = float(cfg.subtb_lambda)
+        coef = cal_subtb_coef_matrix(self.Lambda, int(cfg.N)) # (T+1, T+1)
+        self.register_buffer('coef', coef, persistent=False)
+
+    def get_flow_logp_from_traj(self, traj, debug=False):
+        batch_size = traj[0][1].shape[0]
+        xs = [x.to(self.device) for (t, x, r) in traj]
+        ts = [t[None].to(self.device).repeat(batch_size, 1) for (t, x, r) in traj]  # slightly faster
+
+        state = torch.cat(xs[:-1], dim=0)  # (T*b, d)
+        next_state = torch.cat(xs[1:], dim=0)  # (T*b, d)
+        time = torch.cat(ts[:-1], dim=0)  # (T*b, 1)
+        next_time = torch.cat(ts[1:], dim=0)  # (T*b, 1)
+        log_pf = self.log_pf(time, state, next_state)
+        log_pb = self.log_pb(next_time, next_state, state)
+        log_pf = rearrange(log_pf, "(T b) -> b T", b=batch_size)
+        log_pb = rearrange(log_pb, "(T b) -> b T", b=batch_size)
+
+        states = torch.cat(xs, dim=0)  # ((T+1)*b, d)
+        times = torch.cat(ts, dim=0)  # ((T+1)*b, 1)
+        flows = self.flow(times, states).squeeze(-1)  # ((T+1)*b, 1) -> ((T+1)*b,)
+        flows = rearrange(flows, "(T1 b) -> b T1", b=batch_size)  # (b, T+1)
+
+        rs = [r.to(self.device) for (t, x, r) in traj]
+        logrs = torch.cat(rs, dim=0)  # ((T+1)*b, 1)
+        logrs = rearrange(logrs, "(T1 b) -> b T1", b=batch_size)  # (b, T+1)
+        flows = flows + logrs  # (b, T+1)
+
+        logr_terminal = self.logr_from_traj(traj)  # (b,)
+        flows[:, -1] = logr_terminal
+
+        logits_dict = {"log_pf": log_pf, "log_pb": log_pb, "flows": flows}
+        return logits_dict
+
+    def train_loss(self, traj):
+        batch_size = traj[0][1].shape[0]
+        logits_dict = self.get_flow_logp_from_traj(traj)
+        flows, log_pf, log_pb = logits_dict["flows"], logits_dict["log_pf"], logits_dict["log_pb"]
+        diff_logp = log_pf - log_pb  # (b, T)
+
+        diff_logp_padded = torch.cat(
+            (torch.zeros(batch_size, 1).to(diff_logp), diff_logp.cumsum(dim=-1))
+            , dim=1)
+        # this means A1[:, i, j] = diff_logp[:, i:j].sum(dim=-1)
+        A1 = diff_logp_padded.unsqueeze(1) - diff_logp_padded.unsqueeze(2)  # (b, T+1, T+1)
+
+        A2 = flows[:, :, None] - flows[:, None, :] + A1  # (b, T+1, T+1)
+        A2 = (A2 / self.data_ndim).pow(2).mean(dim=0)  # (T+1, T+1)
+        # torch.triu() is useless here
+        loss = torch.triu(A2 * self.coef, diagonal=1).sum()
+        info = {"loss_dlogp": loss.item()}
+
+        logZ_model = self.flow(traj[0][0][None, None].to(self.device),
+                               traj[0][1][:1, :].to(self.device)).detach()
+        info["logz_model"] = logZ_model.mean().item()
+        return loss, info
+
+    def train_step(self, traj):
+        self.train()
+        loss, info = self.train_loss(traj)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
         info["loss_train"] = loss.item()
         return info
